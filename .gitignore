@@ -1,0 +1,30 @@
+# Byte-compiled / optimised files
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Environment
+.env
+*.env
+
+# Editor directories
+.idea/
+.vscode/
+*.swp
+
+# macOS
+.DS_Store
+
+# Uploaded images (runtime artefacts, not source code)
+backend/static/uploads/*
+!backend/static/uploads/.gitkeep
+
+# Python virtual env
+venv/
+.venv/
+env/
+
+# Distribution / packaging
+dist/
+build/
