@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agentic AI Image Editor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --accent: #6c63ff;
+      --accent-dark: #4c46cc;
+    }
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .drop-zone.drag-over { border-color: var(--accent); background: #f0effe; }
+    .chat-bubble-user  { background: var(--accent); color: #fff; }
+    .chat-bubble-agent { background: #f3f4f6; color: #111; }
+    .spinner { border: 3px solid #e5e7eb; border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* Before/after slider */
+    .ba-container { position: relative; overflow: hidden; cursor: ew-resize; user-select: none; }
+    .ba-after   { position: absolute; inset: 0; overflow: hidden; }
+    .ba-divider { position: absolute; top: 0; bottom: 0; width: 3px; background: #fff; box-shadow: 0 0 6px rgba(0,0,0,.4); cursor: ew-resize; z-index: 10; }
+    .ba-handle  {
+      position: absolute; top: 50%; transform: translate(-50%, -50%);
+      width: 36px; height: 36px; background: #fff; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3); font-size: 16px;
+    }
+    .tool-badge { display: inline-flex; align-items: center; gap: 4px;
+      background: #ede9fe; color: #5b21b6; border-radius: 9999px;
+      padding: 2px 10px; font-size: 12px; font-weight: 600; }
+    .btn-primary { background: var(--accent); color: #fff; border-radius: 8px; font-weight: 600;
+      transition: background .15s; }
+    .btn-primary:hover { background: var(--accent-dark); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+    .img-canvas { max-height: 480px; width: 100%; object-fit: contain; }
+    .chat-log { scrollbar-width: thin; }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-slate-900 to-indigo-950 text-white">
+
+<!-- ======================================================== HEADER -->
+<header class="border-b border-white/10 backdrop-blur-sm sticky top-0 z-20 bg-white/5">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
+    <div class="w-9 h-9 rounded-xl bg-indigo-500 flex items-center justify-center text-xl shadow-lg">🎨</div>
+    <div>
+      <h1 class="text-lg font-bold leading-tight">Agentic AI Image Editor</h1>
+      <p class="text-xs text-white/50">Describe your edit — the AI picks the right tools</p>
+    </div>
+    <div class="ml-auto flex items-center gap-2" id="ai-badge"></div>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 py-6 flex flex-col lg:flex-row gap-6">
+
+  <!-- ============================================================ LEFT PANEL -->
+  <section class="flex flex-col gap-4 flex-1 min-w-0">
+
+    <!-- Upload zone -->
+    <div id="upload-section">
+      <div id="drop-zone"
+        class="drop-zone border-2 border-dashed border-white/30 rounded-2xl p-10 text-center
+               cursor-pointer transition-all hover:border-indigo-400 hover:bg-white/5
+               flex flex-col items-center gap-4">
+        <div class="text-5xl">📤</div>
+        <div>
+          <p class="font-semibold text-lg">Drop an image here</p>
+          <p class="text-sm text-white/50 mt-1">or click to browse &middot; PNG, JPG, WebP, GIF, BMP&hellip;</p>
+        </div>
+        <input type="file" id="file-input" accept="image/*" class="hidden" />
+        <button onclick="document.getElementById('file-input').click()"
+                class="btn-primary px-5 py-2 text-sm">Choose file</button>
+      </div>
+    </div>
+
+    <!-- Image comparison area (hidden until image loaded) -->
+    <div id="image-section" class="hidden flex flex-col gap-4">
+
+      <!-- Before / After toggle tabs -->
+      <div class="flex items-center gap-2 text-sm">
+        <button id="tab-compare" onclick="setView('compare')"
+          class="px-4 py-1.5 rounded-full font-semibold bg-indigo-600 text-white">Compare</button>
+        <button id="tab-original" onclick="setView('original')"
+          class="px-4 py-1.5 rounded-full font-semibold text-white/60 hover:text-white">Original</button>
+        <button id="tab-edited" onclick="setView('edited')"
+          class="px-4 py-1.5 rounded-full font-semibold text-white/60 hover:text-white">Edited</button>
+        <div class="ml-auto flex gap-2">
+          <button id="btn-reset" onclick="resetToOriginal()"
+            class="text-xs px-3 py-1.5 rounded-full border border-white/20 hover:border-white/50 transition-colors">
+            ↺ Reset
+          </button>
+          <a id="btn-download" href="#" download="edited.png"
+             class="text-xs px-3 py-1.5 rounded-full bg-green-600 hover:bg-green-500 font-semibold transition-colors">
+            ⬇ Download
+          </a>
+        </div>
+      </div>
+
+      <!-- Compare slider -->
+      <div id="view-compare" class="ba-container rounded-2xl overflow-hidden bg-slate-800"
+           style="min-height:200px;">
+        <img id="img-original" class="img-canvas block w-full" src="" alt="Original" />
+        <div class="ba-after" id="ba-after-pane">
+          <img id="img-edited-compare" class="img-canvas block w-full" src="" alt="Edited" />
+        </div>
+        <div class="ba-divider" id="ba-divider">
+          <div class="ba-handle">⇔</div>
+        </div>
+        <!-- Labels -->
+        <div class="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded z-10">Before</div>
+        <div class="absolute top-2 right-2 bg-indigo-600/80 text-white text-xs px-2 py-1 rounded z-10">After</div>
+      </div>
+
+      <!-- Single-image views -->
+      <div id="view-original" class="hidden rounded-2xl overflow-hidden bg-slate-800">
+        <img id="img-orig-single" class="img-canvas block mx-auto" src="" alt="Original" />
+      </div>
+      <div id="view-edited" class="hidden rounded-2xl overflow-hidden bg-slate-800">
+        <img id="img-edit-single" class="img-canvas block mx-auto" src="" alt="Edited" />
+      </div>
+
+      <!-- Image info -->
+      <div id="img-info" class="text-xs text-white/40 text-center"></div>
+    </div>
+
+    <!-- Tools panel -->
+    <details class="bg-white/5 rounded-2xl border border-white/10">
+      <summary class="px-4 py-3 font-semibold cursor-pointer select-none text-sm">
+        🛠 Available editing tools
+      </summary>
+      <ul id="tools-list" class="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs text-white/70"></ul>
+    </details>
+
+  </section><!-- /left -->
+
+  <!-- ============================================================ RIGHT PANEL (chat) -->
+  <section class="flex flex-col gap-4 w-full lg:w-96 shrink-0">
+    <div class="bg-white/5 border border-white/10 rounded-2xl flex flex-col h-full"
+         style="min-height: 520px; max-height: 80vh;">
+
+      <div class="px-4 py-3 border-b border-white/10">
+        <p class="font-semibold text-sm">Edit with natural language</p>
+        <p class="text-xs text-white/50 mt-0.5">Type what you want — the agent will figure out the tools</p>
+      </div>
+
+      <!-- Message log -->
+      <div id="chat-log" class="chat-log flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3 text-sm"></div>
+
+      <!-- Input -->
+      <div class="px-4 py-3 border-t border-white/10 flex gap-2">
+        <textarea id="chat-input"
+          rows="2"
+          placeholder="e.g. make it brighter, add vintage look, rotate 90°…"
+          class="flex-1 bg-white/10 border border-white/20 rounded-xl px-3 py-2 text-sm resize-none
+                 placeholder-white/30 focus:outline-none focus:border-indigo-400 transition-colors"
+          onkeydown="handleKey(event)"></textarea>
+        <button id="send-btn" onclick="sendEdit()"
+          class="btn-primary px-4 py-2 text-sm self-end shrink-0"
+          disabled>Send</button>
+      </div>
+    </div>
+
+    <!-- Quick prompts -->
+    <div class="bg-white/5 border border-white/10 rounded-2xl p-4">
+      <p class="text-xs font-semibold text-white/50 mb-2 uppercase tracking-wider">Quick edits</p>
+      <div class="flex flex-wrap gap-2" id="quick-prompts"></div>
+    </div>
+
+  </section><!-- /right -->
+
+</main>
+
+<script>
+// ─── State ──────────────────────────────────────────────────────────────────
+let sessionId = null;
+let originalUrl = null;
+let editedUrl = null;
+let busy = false;
+let baRatio = 0.5;   // before/after divider position
+
+const QUICK_PROMPTS = [
+  "Make it brighter ☀️",
+  "Make it darker 🌑",
+  "Black & white 🖤",
+  "Vintage / retro 📷",
+  "Vivid colours 🌈",
+  "Sharpen 🔪",
+  "Add blur 🌫",
+  "Auto enhance ✨",
+  "Rotate 90° ↻",
+  "Flip horizontal ↔️",
+  "Cinematic look 🎬",
+  "Add vignette 🌑",
+  "Sepia tone 🟤",
+  "Invert colours 🔄",
+  "Warm tones 🔥",
+  "Cool tones 🧊",
+];
+
+// ─── Init ────────────────────────────────────────────────────────────────────
+(async function init() {
+  renderQuickPrompts();
+  await loadTools();
+  checkAiBadge();
+  initDropZone();
+  initSlider();
+})();
+
+// ─── Tools list ─────────────────────────────────────────────────────────────
+async function loadTools() {
+  try {
+    const res = await fetch('/tools');
+    const data = await res.json();
+    const list = document.getElementById('tools-list');
+    data.tools.forEach(t => {
+      const li = document.createElement('li');
+      li.className = 'py-1 border-b border-white/5 last:border-0';
+      li.innerHTML = `<span class="font-mono text-indigo-300">${t.name}</span>
+        <span class="ml-1 text-white/50">${t.description.split('.')[0]}.</span>`;
+      list.appendChild(li);
+    });
+  } catch (_) {}
+}
+
+// ─── AI badge ────────────────────────────────────────────────────────────────
+function checkAiBadge() {
+  const el = document.getElementById('ai-badge');
+  // We'll update this after first edit call
+  el.innerHTML = `<span class="text-xs text-white/30">Mode: keyword fallback</span>`;
+}
+
+function updateAiBadge(usedAi) {
+  const el = document.getElementById('ai-badge');
+  if (usedAi) {
+    el.innerHTML = `<span class="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded-full">🤖 GPT-4o</span>`;
+  } else {
+    el.innerHTML = `<span class="text-xs bg-yellow-500/20 text-yellow-300 px-2 py-1 rounded-full">⚡ Keyword mode</span>`;
+  }
+}
+
+// ─── Quick prompts ───────────────────────────────────────────────────────────
+function renderQuickPrompts() {
+  const container = document.getElementById('quick-prompts');
+  QUICK_PROMPTS.forEach(p => {
+    const btn = document.createElement('button');
+    btn.textContent = p;
+    btn.className = 'text-xs px-3 py-1.5 rounded-full border border-white/20 hover:border-indigo-400 hover:bg-indigo-500/10 transition-all';
+    btn.onclick = () => {
+      document.getElementById('chat-input').value = p;
+      sendEdit();
+    };
+    container.appendChild(btn);
+  });
+}
+
+// ─── Drop zone & file handling ───────────────────────────────────────────────
+function initDropZone() {
+  const zone = document.getElementById('drop-zone');
+  const input = document.getElementById('file-input');
+
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]);
+  });
+  input.addEventListener('change', () => { if (input.files[0]) uploadFile(input.files[0]); });
+}
+
+async function uploadFile(file) {
+  if (!file.type.startsWith('image/')) {
+    addMsg('agent', '❌ Please upload an image file.');
+    return;
+  }
+  setBusy(true);
+  addMsg('user', `📎 Uploading <strong>${file.name}</strong>…`);
+
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    const res = await fetch('/upload', { method: 'POST', body: form });
+    if (!res.ok) throw new Error((await res.json()).detail);
+    const data = await res.json();
+
+    sessionId = data.session_id;
+    originalUrl = data.original_url;
+    editedUrl = data.original_url;
+
+    setImages(originalUrl, originalUrl);
+    showImageSection();
+    document.getElementById('send-btn').disabled = false;
+    document.getElementById('img-info').textContent =
+      `${data.width} × ${data.height} px · ${data.mode}`;
+    addMsg('agent', `✅ Image uploaded. <span class="text-white/50">${data.width}×${data.height}px</span> — now describe how you'd like to edit it!`);
+  } catch (e) {
+    addMsg('agent', `❌ Upload failed: ${e.message}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ─── Edit ────────────────────────────────────────────────────────────────────
+async function sendEdit() {
+  if (busy || !sessionId) return;
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  addMsg('user', escHtml(text));
+  setBusy(true);
+  const loaderId = addLoader();
+
+  try {
+    const res = await fetch('/edit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, request: text }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail);
+    const data = await res.json();
+
+    editedUrl = data.edited_url + '?t=' + Date.now(); // cache-bust
+    setImages(data.original_url, editedUrl);
+    updateAiBadge(data.used_ai);
+
+    // Build tool badges
+    const badges = data.operations.map(op => {
+      const pStr = Object.entries(op.params).map(([k,v]) => `${k}=${v}`).join(', ');
+      return `<span class="tool-badge">🔧 ${op.tool}${pStr ? ` (${pStr})` : ''}</span>`;
+    }).join(' ');
+
+    removeLoader(loaderId);
+    addMsg('agent', `${data.message}<br/><div class="mt-2 flex flex-wrap gap-1">${badges}</div>`);
+
+    // update download link
+    document.getElementById('btn-download').href = editedUrl;
+    setView('compare');
+
+  } catch (e) {
+    removeLoader(loaderId);
+    addMsg('agent', `❌ Error: ${e.message}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ─── Before/After slider ─────────────────────────────────────────────────────
+function initSlider() {
+  const container = document.getElementById('view-compare');
+  const divider   = document.getElementById('ba-divider');
+  const afterPane  = document.getElementById('ba-after-pane');
+  let dragging = false;
+
+  function setRatio(ratio) {
+    baRatio = Math.min(0.95, Math.max(0.05, ratio));
+    const pct = (baRatio * 100).toFixed(1) + '%';
+    divider.style.left = pct;
+    afterPane.style.left = pct;
+    afterPane.style.width = (100 - baRatio * 100).toFixed(1) + '%';
+  }
+
+  setRatio(0.5);
+
+  divider.addEventListener('mousedown',  () => { dragging = true; });
+  divider.addEventListener('touchstart', () => { dragging = true; }, { passive: true });
+
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const rect = container.getBoundingClientRect();
+    setRatio((e.clientX - rect.left) / rect.width);
+  });
+  window.addEventListener('touchmove', e => {
+    if (!dragging) return;
+    const rect = container.getBoundingClientRect();
+    setRatio((e.touches[0].clientX - rect.left) / rect.width);
+  }, { passive: true });
+  window.addEventListener('mouseup',  () => { dragging = false; });
+  window.addEventListener('touchend', () => { dragging = false; });
+
+  // Click anywhere on the container also moves divider
+  container.addEventListener('click', e => {
+    if (e.target === divider || divider.contains(e.target)) return;
+    const rect = container.getBoundingClientRect();
+    setRatio((e.clientX - rect.left) / rect.width);
+  });
+}
+
+// ─── View switching ──────────────────────────────────────────────────────────
+function setView(view) {
+  ['compare','original','edited'].forEach(v => {
+    document.getElementById(`view-${v}`).classList.toggle('hidden', v !== view);
+    const tab = document.getElementById(`tab-${v}`);
+    tab.className = tab.className.replace(/bg-indigo-600 text-white|text-white\/60/, '');
+    if (v === view) {
+      tab.classList.add('bg-indigo-600', 'text-white');
+    } else {
+      tab.classList.add('text-white/60');
+    }
+  });
+}
+
+// ─── Image helpers ───────────────────────────────────────────────────────────
+function setImages(origUrl, editUrl) {
+  document.getElementById('img-original').src      = origUrl;
+  document.getElementById('img-edited-compare').src = editUrl;
+  document.getElementById('img-orig-single').src   = origUrl;
+  document.getElementById('img-edit-single').src   = editUrl;
+  document.getElementById('btn-download').href     = editUrl;
+}
+
+function showImageSection() {
+  document.getElementById('upload-section').classList.add('hidden');
+  document.getElementById('image-section').classList.remove('hidden');
+  setView('compare');
+}
+
+async function resetToOriginal() {
+  if (!sessionId || !originalUrl) return;
+  // Re-upload isn't needed — just reset editedUrl to the original and re-fetch
+  addMsg('agent', '↺ Resetting to original image…');
+  try {
+    const file = await urlToFile(originalUrl, 'reset.png');
+    await uploadFile(file);
+  } catch (_) {
+    addMsg('agent', '❌ Could not reset.');
+  }
+}
+
+async function urlToFile(url, name) {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  return new File([blob], name, { type: blob.type });
+}
+
+// ─── Chat helpers ────────────────────────────────────────────────────────────
+let _loaderCounter = 0;
+
+function addMsg(role, html) {
+  const log = document.getElementById('chat-log');
+  const wrap = document.createElement('div');
+  wrap.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+  const bubble = document.createElement('div');
+  bubble.className = `chat-bubble-${role} rounded-2xl px-4 py-2 max-w-xs leading-relaxed`;
+  bubble.innerHTML = html;
+  wrap.appendChild(bubble);
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+  return wrap;
+}
+
+function addLoader() {
+  const id = `loader-${++_loaderCounter}`;
+  const log = document.getElementById('chat-log');
+  const wrap = document.createElement('div');
+  wrap.id = id;
+  wrap.className = 'flex justify-start';
+  wrap.innerHTML = `<div class="chat-bubble-agent rounded-2xl px-4 py-3 flex items-center gap-2">
+    <div class="spinner w-4 h-4"></div>
+    <span class="text-sm text-white/60">Thinking…</span>
+  </div>`;
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+  return id;
+}
+
+function removeLoader(id) {
+  document.getElementById(id)?.remove();
+}
+
+function setBusy(state) {
+  busy = state;
+  document.getElementById('send-btn').disabled = state || !sessionId;
+  document.getElementById('chat-input').disabled = state;
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendEdit();
+  }
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
